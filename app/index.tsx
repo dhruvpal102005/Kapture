@@ -7,7 +7,7 @@ import {
     TouchableOpacity,
     StyleSheet,
 } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Text as SvgText } from 'react-native-svg';
 
@@ -137,7 +137,7 @@ export default function SignInScreen() {
                     <View style={styles.bottomSection}>
                         <PrimaryButton
                             title="Sign in"
-                            onPress={() => console.log('Sign In Pressed')}
+                            onPress={() => router.push('/sign-in')}
                         />
 
                         <View style={styles.signUpRow}>
