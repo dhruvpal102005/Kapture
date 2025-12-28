@@ -13,6 +13,10 @@ export interface FirebaseUser {
     createdAt: any;
     updatedAt: any;
     provider: 'google' | 'email';
+    // User preferences (set during onboarding)
+    unit?: 'km' | 'mi';
+    territoryColor?: string;
+    onboardingComplete?: boolean;
 }
 
 // Type for Clerk user data (simplified)
@@ -119,5 +123,40 @@ export async function getUserFromFirebase(clerkId: string): Promise<FirebaseUser
     } catch (error) {
         console.error('Error getting user from Firebase:', error);
         return null;
+    }
+}
+
+/**
+ * Saves user preferences to Firebase
+ * @param clerkId - The Clerk user ID
+ * @param preferences - User preferences object
+ * @returns Promise<boolean> - true if successful
+ */
+export async function saveUserPreferences(
+    clerkId: string,
+    preferences: {
+        unit?: 'km' | 'mi';
+        territoryColor?: string;
+        onboardingComplete?: boolean;
+    }
+): Promise<boolean> {
+    try {
+        if (!clerkId) {
+            console.error('saveUserPreferences: Invalid clerkId');
+            return false;
+        }
+
+        const userRef = doc(db, 'users', clerkId);
+
+        await setDoc(userRef, {
+            ...preferences,
+            updatedAt: serverTimestamp(),
+        }, { merge: true });
+
+        console.log('User preferences saved to Firebase:', clerkId, preferences);
+        return true;
+    } catch (error) {
+        console.error('Error saving user preferences:', error);
+        return false;
     }
 }

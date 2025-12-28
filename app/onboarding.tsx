@@ -15,6 +15,7 @@ import { useUser } from '@clerk/clerk-expo';
 import OnboardingCard from '@/components/onboarding/OnboardingCard';
 import AnimatedPolygon from '@/components/onboarding/AnimatedPolygon';
 import { onboardingSteps } from '@/components/onboarding/onboardingData';
+import { saveUserPreferences } from '@/services/userService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -155,17 +156,28 @@ export default function OnboardingScreen() {
         if (currentStep < onboardingSteps.length - 1) {
             setCurrentStep(currentStep + 1);
         } else {
-            // Onboarding complete - save preferences and navigate
+            // Onboarding complete - save preferences to both AsyncStorage and Firebase
             try {
+                // Save to AsyncStorage for quick local access
                 await AsyncStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
                 await AsyncStorage.setItem('kapture_unit', selectedUnit);
                 await AsyncStorage.setItem('kapture_color', selectedColor);
+
+                // Save to Firebase for cloud persistence
+                if (user?.id) {
+                    await saveUserPreferences(user.id, {
+                        unit: selectedUnit as 'km' | 'mi',
+                        territoryColor: selectedColor,
+                        onboardingComplete: true,
+                    });
+                }
             } catch (error) {
                 console.error('Failed to save onboarding state:', error);
             }
-            router.replace('/');
+            // Navigate to main dashboard
+            router.replace('/(tabs)/play');
         }
-    }, [currentStep, selectedUnit, selectedColor]);
+    }, [currentStep, selectedUnit, selectedColor, user]);
 
     const handleOptionSelect = useCallback((value: string) => {
         if (step.optionType === 'unit') {

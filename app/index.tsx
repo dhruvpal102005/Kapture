@@ -140,10 +140,8 @@ export default function LandingScreen() {
                     const onboardingComplete = await AsyncStorage.getItem(ONBOARDING_COMPLETE_KEY);
 
                     if (onboardingComplete === 'true') {
-                        // TODO: Replace with your main app home screen when ready
-                        // For now, we'll show a simple message or redirect to a home page
-                        // router.replace('/home');
-                        console.log('User has completed onboarding - show main app');
+                        // User completed onboarding, go to main dashboard
+                        router.replace('/(tabs)/play');
                     } else {
                         // First time user, go to onboarding
                         router.replace('/onboarding');
