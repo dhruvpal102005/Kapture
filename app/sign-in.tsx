@@ -14,7 +14,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { Stack, router } from 'expo-router';
-import { useSignIn, useOAuth } from '@clerk/clerk-expo';
+import { useSignIn, useOAuth, useAuth } from '@clerk/clerk-expo';
 import * as WebBrowser from 'expo-web-browser';
 import Svg, { Path } from 'react-native-svg';
 
@@ -46,6 +46,7 @@ const GoogleIcon = () => (
 export default function SignInScreen() {
     const { isLoaded, signIn, setActive } = useSignIn();
     const { startOAuthFlow } = useOAuth({ strategy: 'oauth_google' });
+    const { isSignedIn, signOut } = useAuth();
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -81,19 +82,42 @@ export default function SignInScreen() {
     const handleGoogleSignIn = useCallback(async () => {
         setGoogleLoading(true);
         try {
+            // If already signed in, just navigate to home
+            if (isSignedIn) {
+                router.replace('/');
+                return;
+            }
+
             const { createdSessionId, setActive: setActiveSession } = await startOAuthFlow();
 
             if (createdSessionId && setActiveSession) {
                 await setActiveSession({ session: createdSessionId });
+                // User sync to Firebase is handled by useFirebaseUserSync hook in _layout.tsx
                 router.replace('/');
             }
         } catch (error: any) {
             console.error('Google sign in error:', error);
-            Alert.alert('Google Sign In Failed', error.message || 'Please try again');
+
+            // Handle "already signed in" error
+            if (error.message?.includes('already signed in')) {
+                try {
+                    // Sign out the stale session and try again
+                    await signOut();
+                    Alert.alert(
+                        'Session Cleared',
+                        'Please try signing in again.',
+                        [{ text: 'OK' }]
+                    );
+                } catch (signOutError) {
+                    console.error('Sign out error:', signOutError);
+                }
+            } else {
+                Alert.alert('Google Sign In Failed', error.message || 'Please try again');
+            }
         } finally {
             setGoogleLoading(false);
         }
-    }, [startOAuthFlow]);
+    }, [startOAuthFlow, isSignedIn, signOut]);
 
     const handleSignUp = () => {
         router.push('/sign-up');
