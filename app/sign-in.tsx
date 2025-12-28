@@ -70,7 +70,7 @@ export default function SignInScreen() {
 
             if (result.status === 'complete') {
                 await setActive({ session: result.createdSessionId });
-                router.replace('/');
+                router.replace('/onboarding');
             }
         } catch (error: any) {
             Alert.alert('Sign In Failed', error.errors?.[0]?.message || error.message);
@@ -82,9 +82,9 @@ export default function SignInScreen() {
     const handleGoogleSignIn = useCallback(async () => {
         setGoogleLoading(true);
         try {
-            // If already signed in, just navigate to home
+            // If already signed in, go directly to onboarding
             if (isSignedIn) {
-                router.replace('/');
+                router.replace('/onboarding');
                 return;
             }
 
@@ -93,7 +93,8 @@ export default function SignInScreen() {
             if (createdSessionId && setActiveSession) {
                 await setActiveSession({ session: createdSessionId });
                 // User sync to Firebase is handled by useFirebaseUserSync hook in _layout.tsx
-                router.replace('/');
+                // Go directly to onboarding for new/returning users
+                router.replace('/onboarding');
             }
         } catch (error: any) {
             console.error('Google sign in error:', error);

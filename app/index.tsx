@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -6,10 +6,15 @@ import {
     StatusBar,
     TouchableOpacity,
     StyleSheet,
+    ActivityIndicator,
 } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Text as SvgText } from 'react-native-svg';
+import { useAuth } from '@clerk/clerk-expo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const ONBOARDING_COMPLETE_KEY = 'kapture_onboarding_complete';
 
 // --- Consolidated Components ---
 
@@ -121,7 +126,51 @@ const PrimaryButton = ({
 
 // --- Main Screen ---
 
-export default function SignInScreen() {
+export default function LandingScreen() {
+    const { isLoaded, isSignedIn } = useAuth();
+    const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
+
+    useEffect(() => {
+        const checkAuthAndOnboarding = async () => {
+            if (!isLoaded) return;
+
+            if (isSignedIn) {
+                // User is signed in, check if onboarding is complete
+                try {
+                    const onboardingComplete = await AsyncStorage.getItem(ONBOARDING_COMPLETE_KEY);
+
+                    if (onboardingComplete === 'true') {
+                        // TODO: Replace with your main app home screen when ready
+                        // For now, we'll show a simple message or redirect to a home page
+                        // router.replace('/home');
+                        console.log('User has completed onboarding - show main app');
+                    } else {
+                        // First time user, go to onboarding
+                        router.replace('/onboarding');
+                    }
+                } catch (error) {
+                    console.error('Error checking onboarding status:', error);
+                    // Default to onboarding on error
+                    router.replace('/onboarding');
+                }
+            }
+            setIsCheckingOnboarding(false);
+        };
+
+        checkAuthAndOnboarding();
+    }, [isLoaded, isSignedIn]);
+
+    // Show loading while checking auth
+    if (!isLoaded || (isSignedIn && isCheckingOnboarding)) {
+        return (
+            <View style={[styles.container, styles.loadingContainer]}>
+                <ActivityIndicator size="large" color="#FF8080" />
+            </View>
+        );
+    }
+
+    // If signed in, the useEffect will handle redirect
+    // This screen is only shown for unauthenticated users
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
@@ -213,5 +262,9 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontSize: 14,
         textDecorationLine: 'underline',
+    },
+    loadingContainer: {
+        justifyContent: 'center',
+        backgroundColor: '#FAC8C8',
     },
 });

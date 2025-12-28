@@ -63,7 +63,7 @@ export default function SignUpScreen() {
 
             if (result.status === 'complete') {
                 await setActive({ session: result.createdSessionId });
-                router.replace('/');
+                router.replace('/onboarding');
             } else {
                 Alert.alert('Verification Issue', 'Please try again');
             }
