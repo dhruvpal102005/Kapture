@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     SafeAreaView,
     StatusBar,
@@ -12,13 +12,14 @@ import {
 
 // Real 3D globe rendered with Three.js inside a WebView
 import BottomSheet from '@/components/dashboard/BottomSheet';
-import Globe3DWebView from '@/components/dashboard/Globe3DWebView';
+import Globe3DWebView, { Globe3DWebViewRef } from '@/components/dashboard/Globe3DWebView';
 import SideActionButtons from '@/components/dashboard/SideActionButtons';
 import TopNavBar from '@/components/dashboard/TopNavBar';
 
 export default function PlayScreen() {
     const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | undefined>();
     const [locationError, setLocationError] = useState<string | null>(null);
+    const globeRef = useRef<Globe3DWebViewRef>(null);
 
     // Request location permission and get current location
     useEffect(() => {
@@ -51,7 +52,7 @@ export default function PlayScreen() {
 
             {/* 3D globe background */}
             <View style={styles.globeContainer}>
-                <Globe3DWebView userLocation={userLocation} />
+                <Globe3DWebView ref={globeRef} userLocation={userLocation} />
             </View>
 
             {/* Safe area content overlay */}
@@ -73,7 +74,17 @@ export default function PlayScreen() {
                 </View>
 
                 {/* Side action buttons */}
-                <SideActionButtons />
+                <SideActionButtons
+                    onHelpPress={() => {
+                        // Zoom to user's location when question mark button is pressed
+                        if (userLocation && globeRef.current) {
+                            globeRef.current.zoomToLocation(
+                                userLocation.latitude,
+                                userLocation.longitude
+                            );
+                        }
+                    }}
+                />
 
                 {/* Bottom sheet */}
                 <View style={styles.bottomContainer}>

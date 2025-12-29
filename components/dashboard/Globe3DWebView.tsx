@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Dimensions, ActivityIndicator } from 'react-native';
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import { ActivityIndicator, Dimensions, StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -11,6 +11,10 @@ interface Globe3DProps {
         color: string;
     }[];
     onGlobeReady?: () => void;
+}
+
+export interface Globe3DWebViewRef {
+    zoomToLocation: (lat: number, lng: number) => void;
 }
 
 // HTML/JS for 3D Globe using Three.js via CDN
@@ -271,11 +275,12 @@ const getGlobeHTML = (userLat: number, userLng: number) => `
         let previousTouchX = 0;
         let previousTouchY = 0;
         let previousPinchDistance = 0;
-        let rotationVelocityX = 0;
-        let rotationVelocityY = 0.002; // Auto rotation
+        let rotationVelocityX = 0; // Vertical rotation velocity
+        let rotationVelocityY = 0.002; // Horizontal auto rotation
         let targetCameraZ = 4; // Target zoom level
         const minZoom = 2.5; // Closest zoom
         const maxZoom = 8; // Farthest zoom
+        const maxRotationX = Math.PI / 3; // Limit vertical rotation to ±60 degrees
         
         // Calculate distance between two touch points
         function getTouchDistance(touches) {
@@ -297,6 +302,7 @@ const getGlobeHTML = (userLat: number, userLng: number) => `
                 previousTouchX = e.touches[0].clientX;
                 previousTouchY = e.touches[0].clientY;
                 rotationVelocityY = 0;
+                rotationVelocityX = 0;
             }
         });
         
@@ -312,15 +318,27 @@ const getGlobeHTML = (userLat: number, userLng: number) => `
                 
                 previousPinchDistance = currentDistance;
             } else if (isDragging && e.touches.length === 1) {
-                // Handle rotation
+                // Handle rotation - both horizontal and vertical
                 const deltaX = e.touches[0].clientX - previousTouchX;
                 const deltaY = e.touches[0].clientY - previousTouchY;
+                
+                // Horizontal rotation (Y-axis)
                 earth.rotation.y += deltaX * 0.005;
                 glow.rotation.y += deltaX * 0.005;
                 outerGlow.rotation.y += deltaX * 0.005;
+                
+                // Vertical rotation (X-axis) with limits
+                const newRotationX = earth.rotation.x + deltaY * 0.005;
+                if (Math.abs(newRotationX) < maxRotationX) {
+                    earth.rotation.x = newRotationX;
+                    glow.rotation.x = newRotationX;
+                    outerGlow.rotation.x = newRotationX;
+                }
+                
                 previousTouchX = e.touches[0].clientX;
                 previousTouchY = e.touches[0].clientY;
                 rotationVelocityY = deltaX * 0.001;
+                rotationVelocityX = deltaY * 0.001;
             }
         });
         
@@ -351,13 +369,29 @@ const getGlobeHTML = (userLat: number, userLng: number) => `
             
             // Auto rotation when not dragging
             if (!isDragging && !isPinching) {
+                // Horizontal rotation
                 earth.rotation.y += rotationVelocityY;
                 glow.rotation.y += rotationVelocityY;
                 outerGlow.rotation.y += rotationVelocityY;
                 
-                // Gradually slow down
+                // Vertical rotation with limits
+                const newRotationX = earth.rotation.x + rotationVelocityX;
+                if (Math.abs(newRotationX) < maxRotationX) {
+                    earth.rotation.x = newRotationX;
+                    glow.rotation.x = newRotationX;
+                    outerGlow.rotation.x = newRotationX;
+                } else {
+                    rotationVelocityX = 0; // Stop vertical velocity if at limit
+                }
+                
+                // Gradually slow down both rotations
                 if (Math.abs(rotationVelocityY) > 0.002) {
                     rotationVelocityY *= 0.98;
+                }
+                if (Math.abs(rotationVelocityX) > 0.001) {
+                    rotationVelocityX *= 0.98;
+                } else {
+                    rotationVelocityX = 0;
                 }
             }
             
@@ -366,8 +400,10 @@ const getGlobeHTML = (userLat: number, userLng: number) => `
             marker.scale.set(scale, scale, scale);
             markerGlow.scale.set(scale, scale, scale);
             
-            // Update marker position with earth rotation
-            const rotatedMarkerPos = markerPos.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), earth.rotation.y);
+            // Update marker position with earth rotation (both X and Y)
+            const rotatedMarkerPos = markerPos.clone()
+                .applyAxisAngle(new THREE.Vector3(0, 1, 0), earth.rotation.y)
+                .applyAxisAngle(new THREE.Vector3(1, 0, 0), earth.rotation.x);
             marker.position.copy(rotatedMarkerPos);
             markerGlow.position.copy(rotatedMarkerPos);
             
@@ -383,6 +419,115 @@ const getGlobeHTML = (userLat: number, userLng: number) => `
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
+        // Expose zoom function to React Native
+        window.zoomToLocation = function(lat, lng) {
+            console.log('Zooming to location:', lat, lng);
+            
+            // Stop auto rotation during zoom
+            rotationVelocityY = 0;
+            rotationVelocityX = 0;
+            
+            // Store initial values for animation
+            const startRotationY = earth.rotation.y;
+            const startRotationX = earth.rotation.x;
+            const startCameraZ = camera.position.z;
+            const targetCameraZValue = 2.8; // Zoom level (closer = more zoomed in)
+            
+            // Calculate the target rotation to bring the marker to the front
+            // The marker's initial theta is (lng + 180) degrees
+            // We want it at 90 degrees (facing camera on +Z axis)
+            const markerTheta = (lng + 180) * Math.PI / 180;
+            const targetTheta = Math.PI / 2; // 90 degrees - facing camera
+            const targetRotationY = targetTheta - markerTheta;
+            
+            // For vertical rotation, we want to center the view (X rotation = 0)
+            const targetRotationX = 0;
+            
+            // Calculate rotation differences
+            let rotationDiffY = targetRotationY - startRotationY;
+            let rotationDiffX = targetRotationX - startRotationX;
+            
+            // Normalize rotation difference to shortest path (-PI to PI)
+            while (rotationDiffY > Math.PI) rotationDiffY -= Math.PI * 2;
+            while (rotationDiffY < -Math.PI) rotationDiffY += Math.PI * 2;
+            
+            console.log('Current rotation Y:', startRotationY, 'X:', startRotationX);
+            console.log('Target rotation Y:', targetRotationY, 'X:', targetRotationX);
+            console.log('Rotation diff Y:', rotationDiffY, 'X:', rotationDiffX);
+            
+            // Animation variables
+            let progress = 0;
+            const duration = 1200; // 1.2 second animation
+            const startTime = Date.now();
+            
+            // Calculate base marker position (before any rotation)
+            const baseMarkerPos = latLngToVector3(lat, lng, 1.55);
+            
+            function animateZoom() {
+                const elapsed = Date.now() - startTime;
+                progress = Math.min(elapsed / duration, 1);
+                
+                // Easing function (ease-in-out for smoother animation)
+                const eased = progress < 0.5 
+                    ? 4 * progress * progress * progress 
+                    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+                
+                // Calculate current rotations
+                const currentRotY = startRotationY + rotationDiffY * eased;
+                const currentRotX = startRotationX + rotationDiffX * eased;
+                
+                // Rotate globe (both axes)
+                earth.rotation.y = currentRotY;
+                earth.rotation.x = currentRotX;
+                glow.rotation.y = currentRotY;
+                glow.rotation.x = currentRotX;
+                outerGlow.rotation.y = currentRotY;
+                outerGlow.rotation.x = currentRotX;
+                
+                // Zoom camera smoothly (move closer to globe)
+                camera.position.z = startCameraZ + (targetCameraZValue - startCameraZ) * eased;
+                
+                // Update marker position based on current rotation (both axes)
+                const rotatedMarkerPos = baseMarkerPos.clone()
+                    .applyAxisAngle(new THREE.Vector3(0, 1, 0), currentRotY)
+                    .applyAxisAngle(new THREE.Vector3(1, 0, 0), currentRotX);
+                marker.position.copy(rotatedMarkerPos);
+                markerGlow.position.copy(rotatedMarkerPos);
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animateZoom);
+                } else {
+                    // Ensure final positions are correct
+                    const finalRotationY = startRotationY + rotationDiffY;
+                    const finalRotationX = startRotationX + rotationDiffX;
+                    earth.rotation.y = finalRotationY;
+                    earth.rotation.x = finalRotationX;
+                    glow.rotation.y = finalRotationY;
+                    glow.rotation.x = finalRotationX;
+                    outerGlow.rotation.y = finalRotationY;
+                    outerGlow.rotation.x = finalRotationX;
+                    
+                    const finalRotatedPos = baseMarkerPos.clone()
+                        .applyAxisAngle(new THREE.Vector3(0, 1, 0), finalRotationY)
+                        .applyAxisAngle(new THREE.Vector3(1, 0, 0), finalRotationX);
+                    marker.position.copy(finalRotatedPos);
+                    markerGlow.position.copy(finalRotatedPos);
+                    
+                    // Update target camera Z for smooth zoom controls after animation
+                    targetCameraZ = targetCameraZValue;
+                    
+                    console.log('Zoom animation complete');
+                    
+                    // Reset auto rotation after a delay
+                    setTimeout(() => {
+                        rotationVelocityY = 0.002;
+                    }, 500);
+                }
+            }
+            
+            animateZoom();
+        };
+        
         // Notify React Native that globe is ready
         if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage('GLOBE_READY');
@@ -392,41 +537,63 @@ const getGlobeHTML = (userLat: number, userLng: number) => `
 </html>
 `;
 
-export default function Globe3DWebView({ userLocation, territories, onGlobeReady }: Globe3DProps) {
-    const [isLoading, setIsLoading] = useState(true);
-    const webViewRef = useRef<WebView>(null);
+const Globe3DWebView = forwardRef<Globe3DWebViewRef, Globe3DProps>(
+    ({ userLocation, territories, onGlobeReady }, ref) => {
+        const [isLoading, setIsLoading] = useState(true);
+        const webViewRef = useRef<WebView>(null);
 
-    // Default to Mumbai if no location
-    const lat = userLocation?.latitude ?? 19.076;
-    const lng = userLocation?.longitude ?? 72.8777;
+        // Default to Mumbai if no location
+        const lat = userLocation?.latitude ?? 19.076;
+        const lng = userLocation?.longitude ?? 72.8777;
 
-    const handleMessage = (event: any) => {
-        if (event.nativeEvent.data === 'GLOBE_READY') {
-            setIsLoading(false);
-            onGlobeReady?.();
-        }
-    };
+        // Expose methods to parent component
+        useImperativeHandle(ref, () => ({
+            zoomToLocation: (targetLat: number, targetLng: number) => {
+                if (webViewRef.current) {
+                    // Use injectJavaScript to call the function in the WebView
+                    webViewRef.current.injectJavaScript(
+                        `window.zoomToLocation(${targetLat}, ${targetLng}); true;`
+                    );
+                }
+            },
+        }));
 
-    return (
-        <View style={styles.container}>
-            <WebView
-                ref={webViewRef}
-                source={{ html: getGlobeHTML(lat, lng) }}
-                style={styles.webview}
-                scrollEnabled={false}
-                bounces={false}
-                javaScriptEnabled={true}
-                onMessage={handleMessage}
-                originWhitelist={['*']}
-            />
-            {isLoading && (
-                <View style={styles.loadingOverlay}>
-                    <ActivityIndicator size="large" color="#4a9eff" />
-                </View>
-            )}
-        </View>
-    );
-}
+        const handleMessage = (event: any) => {
+            if (event.nativeEvent.data === 'GLOBE_READY') {
+                setIsLoading(false);
+                onGlobeReady?.();
+            }
+        };
+
+        return (
+            <View style={styles.container}>
+                <WebView
+                    ref={webViewRef}
+                    source={{ html: getGlobeHTML(lat, lng) }}
+                    style={styles.webview}
+                    scrollEnabled={false}
+                    bounces={false}
+                    javaScriptEnabled={true}
+                    onMessage={handleMessage}
+                    originWhitelist={['*']}
+                    onError={(syntheticEvent) => {
+                        const { nativeEvent } = syntheticEvent;
+                        console.warn('WebView error: ', nativeEvent);
+                    }}
+                />
+                {isLoading && (
+                    <View style={styles.loadingOverlay}>
+                        <ActivityIndicator size="large" color="#4a9eff" />
+                    </View>
+                )}
+            </View>
+        );
+    }
+);
+
+Globe3DWebView.displayName = 'Globe3DWebView';
+
+export default Globe3DWebView;
 
 const styles = StyleSheet.create({
     container: {
