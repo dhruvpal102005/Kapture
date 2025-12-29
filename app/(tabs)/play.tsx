@@ -1,19 +1,20 @@
-import React, { useEffect, useState } from 'react';
-import {
-    View,
-    Text,
-    StyleSheet,
-    StatusBar,
-    SafeAreaView,
-    TouchableOpacity,
-} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { useEffect, useState } from 'react';
+import {
+    SafeAreaView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 
-import MapGlobe from '@/components/dashboard/MapGlobe';
-import TopNavBar from '@/components/dashboard/TopNavBar';
+// Real 3D globe rendered with Three.js inside a WebView
 import BottomSheet from '@/components/dashboard/BottomSheet';
+import Globe3DWebView from '@/components/dashboard/Globe3DWebView';
 import SideActionButtons from '@/components/dashboard/SideActionButtons';
+import TopNavBar from '@/components/dashboard/TopNavBar';
 
 export default function PlayScreen() {
     const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | undefined>();
@@ -48,9 +49,9 @@ export default function PlayScreen() {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" />
 
-            {/* Map Globe background - real map with streets */}
+            {/* 3D globe background */}
             <View style={styles.globeContainer}>
-                <MapGlobe userLocation={userLocation} />
+                <Globe3DWebView userLocation={userLocation} />
             </View>
 
             {/* Safe area content overlay */}
