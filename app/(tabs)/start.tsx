@@ -1,53 +1,82 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-    View,
-    Text,
-    StyleSheet,
-    StatusBar,
-    TouchableOpacity,
-    Animated,
-    Easing,
-    Dimensions,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import GPSPermissionModal from '@/components/run/GPSPermissionModal';
+import PostRunModal from '@/components/run/PostRunModal';
+import { LocationPoint, RunStats, runTrackingService } from '@/services/runTrackingService';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import MapView, { PROVIDER_GOOGLE, Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
+import { useEffect, useRef, useState } from 'react';
+import {
+    Animated,
+    Dimensions,
+    Easing,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+type RunState = 'idle' | 'running' | 'paused' | 'finished';
 
 export default function StartScreen() {
     const mapRef = useRef<MapView>(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
+    const finishProgressAnim = useRef(new Animated.Value(0)).current;
+    const isHoldingFinishRef = useRef(false);
     const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
     const [mapReady, setMapReady] = useState(false);
+    const [showPermissionModal, setShowPermissionModal] = useState(false);
+    const [hasPermission, setHasPermission] = useState(false);
+    const [runState, setRunState] = useState<RunState>('idle');
+    const [showPostRunModal, setShowPostRunModal] = useState(false);
+    const [routeCoordinates, setRouteCoordinates] = useState<LocationPoint[]>([]);
+    const [isHoldingFinish, setIsHoldingFinish] = useState(false);
 
-    // Stats (will be updated during run)
+    // Stats
     const [distance, setDistance] = useState(0);
-    const [duration, setDuration] = useState('00:00');
-    const [pace, setPace] = useState('0:00');
+    const [duration, setDuration] = useState(0);
+    const [pace, setPace] = useState(0);
     const [capturedArea, setCapturedArea] = useState(0);
+    const [finalStats, setFinalStats] = useState<RunStats | null>(null);
 
-    // Get user location
+    // Show permission modal immediately when user opens Start tab
     useEffect(() => {
         (async () => {
             try {
-                const { status } = await Location.requestForegroundPermissionsAsync();
+                const { status } = await Location.getForegroundPermissionsAsync();
                 if (status === 'granted') {
-                    const location = await Location.getCurrentPositionAsync({});
-                    setUserLocation({
-                        latitude: location.coords.latitude,
-                        longitude: location.coords.longitude,
-                    });
+                    setHasPermission(true);
+                    await initializeLocation();
+                    // Don't show modal if already granted
+                    setShowPermissionModal(false);
                 } else {
-                    // Default to Mumbai
-                    setUserLocation({ latitude: 19.076, longitude: 72.8777 });
+                    // Show permission modal immediately if not granted
+                    setShowPermissionModal(true);
                 }
             } catch (error) {
-                setUserLocation({ latitude: 19.076, longitude: 72.8777 });
+                console.error('Error checking permissions:', error);
+                // Show permission modal immediately on error
+                setShowPermissionModal(true);
             }
         })();
     }, []);
+
+    const initializeLocation = async () => {
+        try {
+            const location = await Location.getCurrentPositionAsync({});
+            const coords = {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+            };
+            setUserLocation(coords);
+        } catch (error) {
+            console.error('Error getting location:', error);
+            setUserLocation({ latitude: 19.076, longitude: 72.8777 });
+        }
+    };
 
     // Pulse animation for location marker
     useEffect(() => {
@@ -69,26 +98,140 @@ export default function StartScreen() {
         ).start();
     }, []);
 
-    // Center map when ready
+    // Center map when location updates
     useEffect(() => {
         if (mapRef.current && userLocation && mapReady) {
-            mapRef.current.animateToRegion({
-                latitude: userLocation.latitude,
-                longitude: userLocation.longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-            }, 500);
+            mapRef.current.animateToRegion(
+                {
+                    latitude: userLocation.latitude,
+                    longitude: userLocation.longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                },
+                500
+            );
         }
     }, [userLocation, mapReady]);
 
-    const handleStartRun = () => {
-        // TODO: Navigate to running tracker screen
-        console.log('Start run pressed');
+    const handlePermissionAccept = async () => {
+        setShowPermissionModal(false);
+        const granted = await runTrackingService.requestPermissions();
+        if (granted) {
+            setHasPermission(true);
+            await initializeLocation();
+        }
     };
 
-    const handleViewOptions = () => {
-        // TODO: Show other run options
-        console.log('View other options');
+    const handlePermissionDeny = () => {
+        setShowPermissionModal(false);
+    };
+
+    const handleStartRun = async () => {
+        if (!hasPermission) {
+            setShowPermissionModal(true);
+            return;
+        }
+
+        const started = await runTrackingService.startTracking(
+            (location) => {
+                setUserLocation({
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                });
+                setRouteCoordinates((prev) => [...prev, location]);
+            },
+            (stats) => {
+                setDistance(stats.distance);
+                setDuration(stats.duration);
+                setPace(stats.averagePace);
+                setCapturedArea(Math.floor(stats.capturedArea));
+            }
+        );
+
+        if (started) {
+            setRunState('running');
+            setRouteCoordinates([]);
+        }
+    };
+
+    const handlePauseRun = () => {
+        runTrackingService.pauseTracking();
+        setRunState('paused');
+    };
+
+    const handleResumeRun = async () => {
+        await runTrackingService.resumeTracking();
+        setRunState('running');
+    };
+
+    const handleFinishPressIn = () => {
+        isHoldingFinishRef.current = true;
+        setIsHoldingFinish(true);
+        // Animate progress over 2 seconds
+        Animated.timing(finishProgressAnim, {
+            toValue: 1,
+            duration: 2000,
+            useNativeDriver: false,
+        }).start(({ finished }) => {
+            if (finished && isHoldingFinishRef.current) {
+                handleFinishRun();
+            }
+        });
+    };
+
+    const handleFinishPressOut = () => {
+        isHoldingFinishRef.current = false;
+        setIsHoldingFinish(false);
+        // Reset progress
+        Animated.timing(finishProgressAnim, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: false,
+        }).start();
+    };
+
+    const handleFinishRun = () => {
+        setIsHoldingFinish(false);
+        finishProgressAnim.setValue(0);
+        const stats = runTrackingService.stopTracking();
+        setFinalStats(stats);
+        setRunState('finished');
+        setShowPostRunModal(true);
+    };
+
+    const handleSaveRun = () => {
+        // TODO: Save run to backend/database
+        console.log('Saving run:', finalStats);
+        setShowPostRunModal(false);
+        resetRun();
+    };
+
+    const handleDiscardRun = () => {
+        setShowPostRunModal(false);
+        resetRun();
+    };
+
+    const resetRun = () => {
+        setRunState('idle');
+        setDistance(0);
+        setDuration(0);
+        setPace(0);
+        setCapturedArea(0);
+        setRouteCoordinates([]);
+        setFinalStats(null);
+    };
+
+    const formatTime = (seconds: number): string => {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    const formatPace = (paceSeconds: number): string => {
+        if (paceSeconds === 0 || !isFinite(paceSeconds)) return '0:00';
+        const mins = Math.floor(paceSeconds / 60);
+        const secs = Math.floor(paceSeconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
     return (
@@ -128,27 +271,38 @@ export default function StartScreen() {
                         scrollEnabled={true}
                         rotateEnabled={true}
                     >
+                        {/* Route polyline */}
+                        {routeCoordinates.length > 1 && (
+                            <Polyline
+                                coordinates={routeCoordinates.map((loc) => ({
+                                    latitude: loc.latitude,
+                                    longitude: loc.longitude,
+                                }))}
+                                strokeColor="#3B82F6"
+                                strokeWidth={4}
+                            />
+                        )}
+
                         {/* User location marker */}
-                        <Marker
-                            coordinate={userLocation}
-                            anchor={{ x: 0.5, y: 0.5 }}
-                        >
-                            <View style={styles.markerContainer}>
-                                <Animated.View
-                                    style={[
-                                        styles.markerPulse,
-                                        {
-                                            transform: [{ scale: pulseAnim }],
-                                            opacity: pulseAnim.interpolate({
-                                                inputRange: [1, 1.8],
-                                                outputRange: [0.4, 0],
-                                            }),
-                                        },
-                                    ]}
-                                />
-                                <View style={styles.markerDot} />
-                            </View>
-                        </Marker>
+                        {userLocation && (
+                            <Marker coordinate={userLocation} anchor={{ x: 0.5, y: 0.5 }}>
+                                <View style={styles.markerContainer}>
+                                    <Animated.View
+                                        style={[
+                                            styles.markerPulse,
+                                            {
+                                                transform: [{ scale: pulseAnim }],
+                                                opacity: pulseAnim.interpolate({
+                                                    inputRange: [1, 1.8],
+                                                    outputRange: [0.4, 0],
+                                                }),
+                                            },
+                                        ]}
+                                    />
+                                    <View style={styles.markerDot} />
+                                </View>
+                            </Marker>
+                        )}
                     </MapView>
                 )}
 
@@ -160,7 +314,22 @@ export default function StartScreen() {
                 </SafeAreaView>
 
                 {/* Center on location button */}
-                <TouchableOpacity style={styles.centerButton}>
+                <TouchableOpacity
+                    style={styles.centerButton}
+                    onPress={() => {
+                        if (mapRef.current && userLocation) {
+                            mapRef.current.animateToRegion(
+                                {
+                                    latitude: userLocation.latitude,
+                                    longitude: userLocation.longitude,
+                                    latitudeDelta: 0.01,
+                                    longitudeDelta: 0.01,
+                                },
+                                500
+                            );
+                        }
+                    }}
+                >
                     <View style={styles.centerButtonInner}>
                         <View style={styles.centerDot} />
                     </View>
@@ -180,34 +349,123 @@ export default function StartScreen() {
                     <Text style={styles.areaNumber}>{capturedArea}</Text>
                     <Text style={styles.areaUnit}>m²</Text>
                 </View>
-                <Text style={styles.captureStatus}>Capture in Progress</Text>
+                <Text style={styles.captureStatus}>
+                    {runState === 'running' ? 'Capture in Progress' : runState === 'paused' ? 'Paused' : 'Ready to Start'}
+                </Text>
 
                 {/* Stats row */}
                 <View style={styles.statsRow}>
                     <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{distance.toFixed(2)}<Text style={styles.statUnit}>km</Text></Text>
+                        <Text style={styles.statValue}>
+                            {distance.toFixed(2)}
+                            <Text style={styles.statUnit}>km</Text>
+                        </Text>
                         <Text style={styles.statLabel}>Distance</Text>
                     </View>
                     <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{duration}</Text>
+                        <Text style={styles.statValue}>{formatTime(duration)}</Text>
                         <Text style={styles.statLabel}>Duration</Text>
                     </View>
                     <View style={styles.statItem}>
-                        <Text style={styles.statValue}>{pace}</Text>
+                        <Text style={styles.statValue}>{formatPace(pace)}</Text>
                         <Text style={styles.statLabel}>Average pace</Text>
                     </View>
                 </View>
 
-                {/* Start Run button */}
-                <TouchableOpacity style={styles.startButton} onPress={handleStartRun}>
-                    <Text style={styles.startButtonText}>Start Run</Text>
-                </TouchableOpacity>
+                {/* Action buttons */}
+                {runState === 'idle' && (
+                    <>
+                        <TouchableOpacity style={styles.startButton} onPress={handleStartRun}>
+                            <Text style={styles.startButtonText}>Start Run</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity>
+                            <Text style={styles.otherOptionsText}>View other options</Text>
+                        </TouchableOpacity>
+                    </>
+                )}
 
-                {/* View other options */}
-                <TouchableOpacity onPress={handleViewOptions}>
-                    <Text style={styles.otherOptionsText}>View other options</Text>
-                </TouchableOpacity>
+                {runState === 'running' && (
+                    <View style={styles.actionButtonRow}>
+                        <TouchableOpacity style={styles.pauseButton} onPress={handlePauseRun}>
+                            <Ionicons name="pause" size={20} color="#1A1A1A" />
+                            <Text style={styles.pauseButtonText}>Pause Run</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.finishButton}
+                            onPressIn={handleFinishPressIn}
+                            onPressOut={handleFinishPressOut}
+                            activeOpacity={0.9}
+                        >
+                            <View style={styles.finishButtonProgressContainer}>
+                                <Animated.View
+                                    style={[
+                                        styles.finishButtonProgress,
+                                        {
+                                            width: finishProgressAnim.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: ['0%', '100%'],
+                                            }),
+                                        },
+                                    ]}
+                                />
+                            </View>
+                            <View style={styles.finishButtonContent}>
+                                <Ionicons name="square" size={20} color="#FFFFFF" />
+                                <Text style={styles.finishButtonText}>Hold to Finish</Text>
+                            </View>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {runState === 'paused' && (
+                    <View style={styles.actionButtonRow}>
+                        <TouchableOpacity style={styles.resumeButton} onPress={handleResumeRun}>
+                            <Ionicons name="play" size={20} color="#1A1A1A" />
+                            <Text style={styles.resumeButtonText}>Resume Run</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.finishButton}
+                            onPressIn={handleFinishPressIn}
+                            onPressOut={handleFinishPressOut}
+                            activeOpacity={0.9}
+                        >
+                            <View style={styles.finishButtonProgressContainer}>
+                                <Animated.View
+                                    style={[
+                                        styles.finishButtonProgress,
+                                        {
+                                            width: finishProgressAnim.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: ['0%', '100%'],
+                                            }),
+                                        },
+                                    ]}
+                                />
+                            </View>
+                            <View style={styles.finishButtonContent}>
+                                <Ionicons name="square" size={20} color="#FFFFFF" />
+                                <Text style={styles.finishButtonText}>Hold to Finish</Text>
+                            </View>
+                        </TouchableOpacity>
+                    </View>
+                )}
             </View>
+
+            {/* Modals */}
+            <GPSPermissionModal
+                visible={showPermissionModal}
+                onAccept={handlePermissionAccept}
+                onDeny={handlePermissionDeny}
+            />
+
+            {finalStats && (
+                <PostRunModal
+                    visible={showPostRunModal}
+                    stats={finalStats}
+                    onSave={handleSaveRun}
+                    onDiscard={handleDiscardRun}
+                />
+            )}
         </View>
     );
 }
@@ -374,6 +632,77 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         color: '#1A1A1A',
+    },
+    actionButtonRow: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    pauseButton: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: '#E5E5E5',
+        borderRadius: 12,
+        paddingVertical: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+    },
+    pauseButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1A1A1A',
+    },
+    resumeButton: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: '#E5E5E5',
+        borderRadius: 12,
+        paddingVertical: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+    },
+    resumeButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1A1A1A',
+    },
+    finishButton: {
+        flex: 1,
+        backgroundColor: '#1A1A1A',
+        borderRadius: 12,
+        paddingVertical: 14,
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    finishButtonProgressContainer: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        right: 0,
+        backgroundColor: '#1A1A1A',
+    },
+    finishButtonProgress: {
+        height: '100%',
+        backgroundColor: '#EF4444',
+    },
+    finishButtonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        position: 'relative',
+        zIndex: 1,
+    },
+    finishButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FFFFFF',
     },
     otherOptionsText: {
         textAlign: 'center',
