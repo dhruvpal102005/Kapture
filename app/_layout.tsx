@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { clearClerkCache, tokenCache } from '@/config/clerk';
+import { useFirebaseUserSync } from '@/hooks/useFirebaseUserSync';
 import { ClerkProvider } from '@clerk/clerk-expo';
 import { Slot } from 'expo-router';
-import { tokenCache, clearClerkCache } from '@/config/clerk';
-import { useFirebaseUserSync } from '@/hooks/useFirebaseUserSync';
+import { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY as string;
 
@@ -31,9 +32,11 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <ClerkProvider tokenCache={tokenCache} publishableKey={publishableKey}>
-      <AppContent />
-    </ClerkProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ClerkProvider tokenCache={tokenCache} publishableKey={publishableKey}>
+        <AppContent />
+      </ClerkProvider>
+    </GestureHandlerRootView>
   );
 }
 

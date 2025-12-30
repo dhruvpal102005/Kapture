@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
     SafeAreaView,
@@ -11,15 +12,20 @@ import {
 } from 'react-native';
 
 // Real 3D globe rendered with Three.js inside a WebView
+import MyClubBottomSheet from '@/components/clubs/MyClubBottomSheet';
 import BottomSheet from '@/components/dashboard/BottomSheet';
 import Globe3DWebView, { Globe3DWebViewRef } from '@/components/dashboard/Globe3DWebView';
 import SideActionButtons from '@/components/dashboard/SideActionButtons';
 import TopNavBar from '@/components/dashboard/TopNavBar';
 
+type TabType = 'lobby' | 'single' | 'club';
+
 export default function PlayScreen() {
     const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | undefined>();
     const [locationError, setLocationError] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState<TabType>('single');
     const globeRef = useRef<Globe3DWebViewRef>(null);
+    const router = useRouter();
 
     // Request location permission and get current location
     useEffect(() => {
@@ -65,7 +71,7 @@ export default function PlayScreen() {
                     </TouchableOpacity>
 
                     {/* Top navigation tabs */}
-                    <TopNavBar />
+                    <TopNavBar activeTab={activeTab} onTabChange={setActiveTab} />
                 </View>
 
                 {/* My runs label */}
@@ -86,11 +92,21 @@ export default function PlayScreen() {
                     }}
                 />
 
-                {/* Bottom sheet */}
-                <View style={styles.bottomContainer}>
-                    <BottomSheet />
-                </View>
+                {/* Bottom sheet - show different content based on active tab */}
+                {activeTab !== 'club' && (
+                    <View style={styles.bottomContainer}>
+                        <BottomSheet />
+                    </View>
+                )}
             </SafeAreaView>
+
+            {/* Club bottom sheet - rendered outside SafeAreaView for proper gesture handling */}
+            {activeTab === 'club' && (
+                <MyClubBottomSheet
+                    visible={activeTab === 'club'}
+                    onCreateClub={() => router.push('/clubs/create')}
+                />
+            )}
         </View>
     );
 }
