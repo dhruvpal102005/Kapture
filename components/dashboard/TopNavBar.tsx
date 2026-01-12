@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 type TabType = 'lobby' | 'single' | 'club';
 
@@ -10,10 +9,7 @@ interface TopNavBarProps {
 }
 
 export default function TopNavBar({ activeTab = 'single', onTabChange }: TopNavBarProps) {
-    const [currentTab, setCurrentTab] = useState<TabType>(activeTab);
-
     const handleTabPress = (tab: TabType) => {
-        setCurrentTab(tab);
         onTabChange?.(tab);
     };
 
@@ -21,16 +17,16 @@ export default function TopNavBar({ activeTab = 'single', onTabChange }: TopNavB
         <View style={styles.container}>
             {/* Private Lobby - Dropdown style */}
             <TouchableOpacity
-                style={[styles.tab, currentTab === 'lobby' && styles.activeTab]}
+                style={[styles.tab, activeTab === 'lobby' && styles.activeTab]}
                 onPress={() => handleTabPress('lobby')}
             >
-                <Text style={[styles.tabText, currentTab === 'lobby' && styles.activeTabText]}>
+                <Text style={[styles.tabText, activeTab === 'lobby' && styles.activeTabText]}>
                     Private Lobby
                 </Text>
                 <Ionicons
                     name="chevron-down"
                     size={14}
-                    color={currentTab === 'lobby' ? '#FFFFFF' : 'rgba(255,255,255,0.6)'}
+                    color={activeTab === 'lobby' ? '#FFFFFF' : 'rgba(255,255,255,0.6)'}
                 />
             </TouchableOpacity>
 
@@ -39,21 +35,21 @@ export default function TopNavBar({ activeTab = 'single', onTabChange }: TopNavB
                 style={[
                     styles.tab,
                     styles.centerTab,
-                    currentTab === 'single' && styles.activeTab,
+                    activeTab === 'single' && styles.activeTab,
                 ]}
                 onPress={() => handleTabPress('single')}
             >
-                <Text style={[styles.tabText, currentTab === 'single' && styles.activeTabText]}>
+                <Text style={[styles.tabText, activeTab === 'single' && styles.activeTabText]}>
                     Single Player
                 </Text>
             </TouchableOpacity>
 
             {/* My Club */}
             <TouchableOpacity
-                style={[styles.tab, currentTab === 'club' && styles.activeTab]}
+                style={[styles.tab, activeTab === 'club' && styles.activeTab]}
                 onPress={() => handleTabPress('club')}
             >
-                <Text style={[styles.tabText, currentTab === 'club' && styles.activeTabText]}>
+                <Text style={[styles.tabText, activeTab === 'club' && styles.activeTabText]}>
                     My Club
                 </Text>
             </TouchableOpacity>
@@ -79,7 +75,7 @@ const styles = StyleSheet.create({
         gap: 4,
     },
     centerTab: {
-        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        // Removed static background color to prevent "always active" look
         paddingHorizontal: 20,
     },
     activeTab: {
