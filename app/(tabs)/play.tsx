@@ -24,6 +24,7 @@ export default function PlayScreen() {
     const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | undefined>();
     const [locationError, setLocationError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<TabType>('single');
+    const [activeSheetTab, setActiveSheetTab] = useState<'leaderboard' | 'events' | 'territories' | 'history'>('leaderboard');
     const globeRef = useRef<Globe3DWebViewRef>(null);
     const router = useRouter();
 
@@ -92,13 +93,15 @@ export default function PlayScreen() {
                     }}
                 />
 
-                {/* Bottom sheet - show different content based on active tab */}
-                {activeTab !== 'club' && (
-                    <View style={styles.bottomContainer}>
-                        <BottomSheet />
-                    </View>
-                )}
             </SafeAreaView>
+
+            {/* Bottom sheet - rendered outside SafeAreaView for proper gesture handling */}
+            {activeTab !== 'club' && (
+                <BottomSheet
+                    activeTab={activeSheetTab}
+                    onTabChange={setActiveSheetTab}
+                />
+            )}
 
             {/* Club bottom sheet - rendered outside SafeAreaView for proper gesture handling */}
             {activeTab === 'club' && (
