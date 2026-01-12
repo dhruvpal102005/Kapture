@@ -1,28 +1,35 @@
-import React from 'react';
-import { View, TouchableOpacity, StyleSheet, Text } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUser } from '@clerk/clerk-expo';
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import { useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface SideActionButtonsProps {
     onNotificationPress?: () => void;
     onProfilePress?: () => void;
-    onLocationPress?: () => void;
     onHelpPress?: () => void;
     onAddPress?: () => void;
+    onVisibilityToggle?: (visible: boolean) => void;
 }
 
 export default function SideActionButtons({
     onNotificationPress,
     onProfilePress,
-    onLocationPress,
     onHelpPress,
     onAddPress,
+    onVisibilityToggle,
 }: SideActionButtonsProps) {
     const { user } = useUser();
+    const [isVisible, setIsVisible] = useState(true);
 
     // Get user initials for avatar fallback
     const initials = user?.firstName?.[0]?.toUpperCase() || 'U';
+
+    const handleVisibilityToggle = () => {
+        const newState = !isVisible;
+        setIsVisible(newState);
+        onVisibilityToggle?.(newState);
+    };
 
     return (
         <View style={styles.container}>
@@ -41,13 +48,21 @@ export default function SideActionButtons({
                 )}
             </TouchableOpacity>
 
-            {/* Location marker */}
-            <TouchableOpacity style={styles.actionButton} onPress={onLocationPress}>
-                <View style={styles.locationIcon}>
-                    <View style={styles.locationPin} />
-                    <View style={styles.locationDot} />
-                </View>
+            {/* Visibility toggle button */}
+            <TouchableOpacity
+                style={[
+                    styles.visibilityButton,
+                    isVisible ? styles.visibilityButtonExpanded : styles.visibilityButtonCollapsed
+                ]}
+                onPress={handleVisibilityToggle}
+            >
+                <Ionicons
+                    name={isVisible ? 'eye' : 'eye-off'}
+                    size={16}
+                    color="#FFFFFF"
+                />
             </TouchableOpacity>
+
 
             {/* Help button */}
             <TouchableOpacity style={styles.actionButton} onPress={onHelpPress}>
@@ -96,31 +111,28 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
     },
+    visibilityButton: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#8B5CF6', // Purple color
+    },
+    visibilityButtonExpanded: {
+        // Active state - full purple
+        backgroundColor: '#8B5CF6',
+    },
+    visibilityButtonCollapsed: {
+        // Inactive state - dimmer purple
+        backgroundColor: 'rgba(139, 92, 246, 0.6)',
+    },
     actionButton: {
         width: 32,
         height: 32,
         borderRadius: 16,
         justifyContent: 'center',
         alignItems: 'center',
-    },
-    locationIcon: {
-        alignItems: 'center',
-    },
-    locationPin: {
-        width: 18,
-        height: 24,
-        backgroundColor: '#8B5CF6',
-        borderRadius: 9,
-        borderBottomLeftRadius: 3,
-        borderBottomRightRadius: 3,
-    },
-    locationDot: {
-        position: 'absolute',
-        top: 6,
-        width: 6,
-        height: 6,
-        backgroundColor: '#FFFFFF',
-        borderRadius: 3,
     },
     helpIcon: {
         width: 22,
@@ -145,3 +157,4 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
 });
+
