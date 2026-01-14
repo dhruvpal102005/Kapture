@@ -3,7 +3,6 @@ import { db } from '@/config/firebase';
 import {
     collection,
     doc,
-    getDoc,
     getDocs,
     limit,
     orderBy,
@@ -14,7 +13,7 @@ import {
     updateDoc,
     where
 } from 'firebase/firestore';
-import { LocationPoint } from './runTrackingService';
+import { LocationPoint } from './types';
 
 // Types for run data stored in Firestore
 export interface RunSession {
@@ -23,11 +22,11 @@ export interface RunSession {
     status: 'active' | 'paused' | 'completed';
     startTime: Timestamp;
     endTime?: Timestamp;
-    totalDistance: number;      // km
-    totalDuration: number;      // seconds
-    averagePace: number;        // seconds per km
-    capturedArea: number;       // square meters
-    pausedDuration: number;     // total paused time in ms
+    totalDistance: number;
+    totalDuration: number;
+    averagePace: number;
+    capturedArea: number;
+    pausedDuration: number;
     createdAt: any;
     updatedAt: any;
 }
@@ -40,8 +39,6 @@ export interface LocationBatch {
 
 /**
  * Starts a new run session in Firestore
- * @param userId - The Clerk user ID
- * @returns The session ID for the new run
  */
 export async function startRunSession(userId: string): Promise<string> {
     try {
@@ -76,10 +73,7 @@ export async function startRunSession(userId: string): Promise<string> {
 }
 
 /**
- * Saves a batch of location points to the run's locations subcollection
- * @param sessionId - The run session ID
- * @param locations - Array of GPS location points
- * @param batchIndex - The batch number for ordering
+ * Saves a batch of location points
  */
 export async function saveLocationBatch(
     sessionId: string,
@@ -87,9 +81,7 @@ export async function saveLocationBatch(
     batchIndex: number
 ): Promise<void> {
     try {
-        if (!sessionId || locations.length === 0) {
-            return;
-        }
+        if (!sessionId || locations.length === 0) return;
 
         const locationsRef = collection(db, 'runs', sessionId, 'locations');
         const batchDoc = doc(locationsRef, `batch_${batchIndex.toString().padStart(6, '0')}`);
@@ -109,15 +101,11 @@ export async function saveLocationBatch(
         console.log(`Location batch ${batchIndex} saved with ${locations.length} points`);
     } catch (error) {
         console.error('Error saving location batch:', error);
-        // Don't throw - we don't want location save failures to crash the app
     }
 }
 
 /**
- * Updates the run status (pause/resume)
- * @param sessionId - The run session ID
- * @param status - New status
- * @param pausedDuration - Total paused duration in ms (optional)
+ * Updates the run status
  */
 export async function updateRunStatus(
     sessionId: string,
@@ -145,9 +133,7 @@ export async function updateRunStatus(
 }
 
 /**
- * Finishes a run session and saves final stats
- * @param sessionId - The run session ID
- * @param stats - Final run statistics
+ * Finishes a run session
  */
 export async function finishRunSession(
     sessionId: string,
@@ -183,9 +169,6 @@ export async function finishRunSession(
 
 /**
  * Gets a user's run history
- * @param userId - The Clerk user ID
- * @param limitCount - Maximum number of runs to return
- * @returns Array of run sessions
  */
 export async function getUserRunHistory(
     userId: string,
@@ -217,69 +200,5 @@ export async function getUserRunHistory(
     } catch (error) {
         console.error('Error getting run history:', error);
         return [];
-    }
-}
-
-/**
- * Gets a specific run with its route data
- * @param runId - The run session ID
- * @returns Run session with all location points
- */
-export async function getRunWithRoute(
-    runId: string
-): Promise<{ run: RunSession | null; route: LocationPoint[] }> {
-    try {
-        if (!runId) return { run: null, route: [] };
-
-        // Get run document
-        const runRef = doc(db, 'runs', runId);
-        const runSnap = await getDoc(runRef);
-
-        if (!runSnap.exists()) {
-            return { run: null, route: [] };
-        }
-
-        const run = {
-            id: runSnap.id,
-            ...runSnap.data(),
-        } as RunSession;
-
-        // Get all location batches
-        const locationsRef = collection(db, 'runs', runId, 'locations');
-        const locationsQuery = query(locationsRef, orderBy('batchIndex', 'asc'));
-        const locationsSnap = await getDocs(locationsQuery);
-
-        const route: LocationPoint[] = [];
-        locationsSnap.forEach(doc => {
-            const batch = doc.data() as LocationBatch;
-            route.push(...batch.points);
-        });
-
-        return { run, route };
-    } catch (error) {
-        console.error('Error getting run with route:', error);
-        return { run: null, route: [] };
-    }
-}
-
-/**
- * Deletes an incomplete/abandoned run session
- * @param sessionId - The run session ID
- */
-export async function deleteRunSession(sessionId: string): Promise<void> {
-    try {
-        if (!sessionId) return;
-
-        // Note: This only marks as deleted, actual deletion would need
-        // a Cloud Function to clean up the subcollection
-        const runRef = doc(db, 'runs', sessionId);
-        await updateDoc(runRef, {
-            status: 'deleted' as any,
-            updatedAt: serverTimestamp(),
-        });
-
-        console.log('Run session marked for deletion:', sessionId);
-    } catch (error) {
-        console.error('Error deleting run session:', error);
     }
 }
