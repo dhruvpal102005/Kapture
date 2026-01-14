@@ -1,10 +1,13 @@
 import * as Location from 'expo-location';
 import * as runService from './runService';
 import { socketService } from './socketService';
-import { LocationPoint, RunStats } from './types';
+import { CapturedPolygon, LocationPoint, RunStats } from './types';
 
 // Re-export types for backward compatibility
-export type { LocationPoint, RunStats } from './types';
+export type { CapturedPolygon, LocationPoint, RunStats } from './types';
+
+// Constants for area capture
+const LOOP_THRESHOLD_METERS = 50; // Distance to consider start/end as a loop
 
 class RunTrackingService {
     private locationSubscription: Location.LocationSubscription | null = null;
@@ -36,6 +39,7 @@ class RunTrackingService {
     private lastCalculatedDistance: number = 0; // Last distance used for pace calculation
     private cachedDistance: number = 0; // Cached total distance for stability
     private lastValidLocationTime: number = 0; // Time of last valid location
+    private smoothedLocations: LocationPoint[] = []; // Smoothed locations for route display
 
     async requestPermissions(): Promise<boolean> {
         try {
@@ -116,13 +120,15 @@ class RunTrackingService {
                     // Filter and validate location before adding to valid locations
                     if (this.isValidLocation(point)) {
                         this.validLocations.push(point);
-                        // Add to Firebase batch buffer
+                        // Smooth the location for cleaner route display
+                        const smoothedPoint = this.smoothLocation(point);
+                        // Add to Firebase batch buffer (use raw point for accuracy)
                         this.addToLocationBuffer(point);
                         // Update stats only when we have valid movement
                         this.updateStats();
-                        // Send to socket for real-time streaming
+                        // Send smoothed location to socket
                         const stats = this.getStats();
-                        socketService.sendLocation(point, stats);
+                        socketService.sendLocation(smoothedPoint, stats);
                     } else {
                         // Still update stats periodically even if no new valid location
                         // This ensures duration and other stats update correctly
@@ -160,6 +166,49 @@ class RunTrackingService {
 
         // Only accept if moved more than threshold (filters stationary GPS drift)
         return distance >= this.MIN_DISTANCE_THRESHOLD;
+    }
+
+    /**
+     * Smooths a location point using weighted average of recent points
+     * This reduces GPS jitter and makes the route look cleaner
+     */
+    private smoothLocation(point: LocationPoint): LocationPoint {
+        const SMOOTHING_WINDOW = 3; // Number of recent points to average
+
+        // Add point to smoothed locations
+        this.smoothedLocations.push(point);
+
+        // Not enough points to smooth yet
+        if (this.smoothedLocations.length < SMOOTHING_WINDOW) {
+            return point;
+        }
+
+        // Get the last N points including the new one
+        const recentPoints = this.smoothedLocations.slice(-SMOOTHING_WINDOW);
+
+        // Calculate weighted average (newer points have more weight)
+        let totalLat = 0;
+        let totalLng = 0;
+        let totalWeight = 0;
+
+        for (let i = 0; i < recentPoints.length; i++) {
+            const weight = i + 1; // Weight increases for more recent points
+            totalLat += recentPoints[i].latitude * weight;
+            totalLng += recentPoints[i].longitude * weight;
+            totalWeight += weight;
+        }
+
+        const smoothedPoint: LocationPoint = {
+            latitude: totalLat / totalWeight,
+            longitude: totalLng / totalWeight,
+            timestamp: point.timestamp,
+            accuracy: point.accuracy,
+        };
+
+        // Update the last point in smoothedLocations with the smoothed value
+        this.smoothedLocations[this.smoothedLocations.length - 1] = smoothedPoint;
+
+        return smoothedPoint;
     }
 
     // Firebase batch saving methods
@@ -301,13 +350,14 @@ class RunTrackingService {
                 );
             }
 
-            // Save final stats to Firebase
+            // Save final stats to Firebase (including captured polygon)
             runService.finishRunSession(this.sessionId, {
                 totalDistance: finalStats.distance,
                 totalDuration: finalStats.duration,
                 averagePace: finalStats.averagePace,
                 capturedArea: finalStats.capturedArea,
                 pausedDuration: this.totalPausedDuration,
+                capturedPolygon: finalStats.capturedPolygon,
             });
         }
 
@@ -382,15 +432,17 @@ class RunTrackingService {
             }
         }
 
-        // Calculate captured area using valid locations
-        const capturedArea = this.calculateArea(this.validLocations);
+        // Calculate captured area and polygon using valid locations
+        const capturedPolygon = this.getCapturedPolygon(this.validLocations);
+        const capturedArea = capturedPolygon.area;
 
         return {
             distance,
             duration,
             averagePace,
             capturedArea,
-            locations: [...this.locations], // Return all locations for route display
+            locations: [...this.smoothedLocations], // Return smoothed locations for route display
+            capturedPolygon, // Include polygon for territory capture
         };
     }
 
@@ -412,27 +464,92 @@ class RunTrackingService {
         return (degrees * Math.PI) / 180;
     }
 
+    /**
+     * Check if the route forms a loop (start and end within threshold)
+     */
+    private isLoop(locations: LocationPoint[]): boolean {
+        if (locations.length < 3) return false;
+
+        const start = locations[0];
+        const end = locations[locations.length - 1];
+        const distanceKm = this.calculateDistance(start, end);
+        const distanceMeters = distanceKm * 1000;
+
+        return distanceMeters <= LOOP_THRESHOLD_METERS;
+    }
+
+    /**
+     * Get closed polygon - if not a loop, close it with a line from end to start
+     */
+    getCapturedPolygon(locations: LocationPoint[]): CapturedPolygon {
+        if (locations.length < 3) {
+            return {
+                coordinates: [],
+                area: 0,
+                isLoop: false,
+            };
+        }
+
+        const isLoop = this.isLoop(locations);
+
+        // Create coordinates array
+        const coordinates = locations.map(loc => ({
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+        }));
+
+        // If not a loop, close the polygon by adding start point
+        if (!isLoop && coordinates.length > 0) {
+            coordinates.push({
+                latitude: locations[0].latitude,
+                longitude: locations[0].longitude,
+            });
+        }
+
+        // Calculate area using Shoelace formula
+        const area = this.calculatePolygonArea(coordinates);
+
+        return {
+            coordinates,
+            area,
+            isLoop,
+        };
+    }
+
+    /**
+     * Calculate polygon area using Shoelace formula (Surveyor's formula)
+     * Returns area in square meters
+     */
+    private calculatePolygonArea(coordinates: { latitude: number; longitude: number }[]): number {
+        if (coordinates.length < 3) return 0;
+
+        // Convert lat/lng to meters relative to first point
+        const origin = coordinates[0];
+        const metersPerDegreeLat = 111320; // meters per degree of latitude
+        const metersPerDegreeLng = 111320 * Math.cos(this.toRad(origin.latitude));
+
+        const points = coordinates.map(coord => ({
+            x: (coord.longitude - origin.longitude) * metersPerDegreeLng,
+            y: (coord.latitude - origin.latitude) * metersPerDegreeLat,
+        }));
+
+        // Shoelace formula
+        let area = 0;
+        for (let i = 0; i < points.length; i++) {
+            const j = (i + 1) % points.length;
+            area += points[i].x * points[j].y;
+            area -= points[j].x * points[i].y;
+        }
+
+        return Math.abs(area / 2);
+    }
+
+    /**
+     * Calculate area for backwards compatibility (uses polygon area)
+     */
     private calculateArea(locations: LocationPoint[]): number {
-        if (locations.length < 3) return 0;
-
-        // Calculate bounding box area (simplified)
-        const lats = locations.map((l) => l.latitude);
-        const lngs = locations.map((l) => l.longitude);
-        const minLat = Math.min(...lats);
-        const maxLat = Math.max(...lats);
-        const minLng = Math.min(...lngs);
-        const maxLng = Math.max(...lngs);
-
-        // Approximate area using bounding box
-        const latDiff = maxLat - minLat;
-        const lngDiff = maxLng - minLng;
-        const avgLat = (minLat + maxLat) / 2;
-
-        // Convert to meters
-        const latMeters = latDiff * 111320; // 1 degree latitude ≈ 111320 meters
-        const lngMeters = lngDiff * 111320 * Math.cos(this.toRad(avgLat));
-
-        return latMeters * lngMeters;
+        const polygon = this.getCapturedPolygon(locations);
+        return polygon.area;
     }
 
     private reset(): void {
@@ -441,6 +558,7 @@ class RunTrackingService {
         this.totalPausedDuration = 0;
         this.locations = [];
         this.validLocations = [];
+        this.smoothedLocations = [];
         this.recentPaces = [];
         this.onLocationUpdate = undefined;
         this.onStatsUpdate = undefined;

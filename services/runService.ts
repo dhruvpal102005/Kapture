@@ -13,7 +13,7 @@ import {
     updateDoc,
     where
 } from 'firebase/firestore';
-import { LocationPoint } from './types';
+import { CapturedPolygon, LocationPoint } from './types';
 
 // Types for run data stored in Firestore
 export interface RunSession {
@@ -26,6 +26,7 @@ export interface RunSession {
     totalDuration: number;
     averagePace: number;
     capturedArea: number;
+    capturedPolygon?: CapturedPolygon; // Territory captured during the run
     pausedDuration: number;
     createdAt: any;
     updatedAt: any;
@@ -143,6 +144,7 @@ export async function finishRunSession(
         averagePace: number;
         capturedArea: number;
         pausedDuration: number;
+        capturedPolygon?: CapturedPolygon;
     }
 ): Promise<void> {
     try {
@@ -150,7 +152,7 @@ export async function finishRunSession(
 
         const runRef = doc(db, 'runs', sessionId);
 
-        await updateDoc(runRef, {
+        const updateData: any = {
             status: 'completed',
             endTime: Timestamp.now(),
             totalDistance: stats.totalDistance,
@@ -159,8 +161,14 @@ export async function finishRunSession(
             capturedArea: stats.capturedArea,
             pausedDuration: stats.pausedDuration,
             updatedAt: serverTimestamp(),
-        });
+        };
 
+        // Add captured polygon if available
+        if (stats.capturedPolygon) {
+            updateData.capturedPolygon = stats.capturedPolygon;
+        }
+
+        await updateDoc(runRef, updateData);
         console.log('Run session completed:', sessionId);
     } catch (error) {
         console.error('Error finishing run session:', error);

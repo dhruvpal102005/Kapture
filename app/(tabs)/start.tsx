@@ -36,6 +36,7 @@ export default function StartScreen() {
     const [showPostRunModal, setShowPostRunModal] = useState(false);
     const [routeCoordinates, setRouteCoordinates] = useState<LocationPoint[]>([]);
     const [isHoldingFinish, setIsHoldingFinish] = useState(false);
+    const [followUser, setFollowUser] = useState(true); // Camera follows user like Strava
 
     // Stats
     const [distance, setDistance] = useState(0);
@@ -140,11 +141,22 @@ export default function StartScreen() {
         const started = await runTrackingService.startTracking(
             userId,
             (location) => {
-                setUserLocation({
+                const newLocation = {
                     latitude: location.latitude,
                     longitude: location.longitude,
-                });
+                };
+                setUserLocation(newLocation);
                 setRouteCoordinates((prev) => [...prev, location]);
+
+                // Animate camera to follow user if followUser is enabled
+                if (followUser && mapRef.current) {
+                    mapRef.current.animateToRegion({
+                        latitude: location.latitude,
+                        longitude: location.longitude,
+                        latitudeDelta: 0.005, // Closer zoom during run
+                        longitudeDelta: 0.005,
+                    }, 500); // 500ms smooth animation
+                }
             },
             (stats) => {
                 setDistance(stats.distance);
@@ -157,6 +169,7 @@ export default function StartScreen() {
         if (started) {
             setRunState('running');
             setRouteCoordinates([]);
+            setFollowUser(true); // Enable follow on run start
         }
     };
 
@@ -269,6 +282,7 @@ export default function StartScreen() {
                             longitudeDelta: 0.015,
                         }}
                         onMapReady={() => setMapReady(true)}
+                        onPanDrag={() => setFollowUser(false)} // Disable auto-follow when user pans
                         showsCompass={false}
                         showsScale={false}
                         showsBuildings={true}
@@ -319,17 +333,18 @@ export default function StartScreen() {
                     </TouchableOpacity>
                 </SafeAreaView>
 
-                {/* Center on location button */}
+                {/* Center on location button - re-enables follow mode */}
                 <TouchableOpacity
-                    style={styles.centerButton}
+                    style={[styles.centerButton, !followUser && runState === 'running' && styles.centerButtonHighlight]}
                     onPress={() => {
                         if (mapRef.current && userLocation) {
+                            setFollowUser(true); // Re-enable auto-follow
                             mapRef.current.animateToRegion(
                                 {
                                     latitude: userLocation.latitude,
                                     longitude: userLocation.longitude,
-                                    latitudeDelta: 0.01,
-                                    longitudeDelta: 0.01,
+                                    latitudeDelta: 0.005,
+                                    longitudeDelta: 0.005,
                                 },
                                 500
                             );
@@ -337,7 +352,11 @@ export default function StartScreen() {
                     }}
                 >
                     <View style={styles.centerButtonInner}>
-                        <View style={styles.centerDot} />
+                        <Ionicons
+                            name={followUser ? "locate" : "locate-outline"}
+                            size={20}
+                            color={!followUser && runState === 'running' ? "#3B82F6" : "#666"}
+                        />
                     </View>
                 </TouchableOpacity>
             </View>
@@ -520,11 +539,12 @@ const styles = StyleSheet.create({
     centerButtonInner: {
         width: 24,
         height: 24,
-        borderRadius: 12,
-        borderWidth: 2,
-        borderColor: '#3B82F6',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    centerButtonHighlight: {
+        borderWidth: 2,
+        borderColor: '#3B82F6',
     },
     centerDot: {
         width: 8,

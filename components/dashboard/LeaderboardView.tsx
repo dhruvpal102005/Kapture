@@ -1,21 +1,13 @@
+import {
+    formatArea,
+    getAreaLeaderboard,
+    getUserRankAndStats,
+    LeaderboardEntry,
+} from '@/services/leaderboardService';
+import { useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-
-// Mock Data
-const LEADERBOARD_DATA = [
-    { id: '1', rank: 1, name: 'Alice Smith', countryCode: 'US', score: '2,400.5KM²', trend: 'up' },
-    { id: '2', rank: 2, name: 'Bob Johnson', countryCode: 'FR', score: '1,950.2KM²', trend: 'down' },
-    { id: '3', rank: 3, name: 'Charlie Kim', countryCode: 'KR', score: '1,800.0KM²', trend: 'up' },
-    { id: '4', rank: 4, name: 'David Lee', countryCode: 'JP', score: '1,750.8KM²', trend: 'stable' },
-    { id: '5', rank: 5, name: 'Emma Watson', countryCode: 'GB', score: '1,600.4KM²', trend: 'up' },
-    { id: '6', rank: 6, name: 'Frank Miller', countryCode: 'US', score: '1,200.1KM²', trend: 'down' },
-    { id: '7', rank: 7, name: 'Grace Ho', countryCode: 'CN', score: '1,100.9KM²', trend: 'up' },
-    { id: '8', rank: 8, name: 'Henry Ford', countryCode: 'US', score: '1,000.5KM²', trend: 'stable' },
-    { id: '9', rank: 9, name: 'Nate Pendleton', countryCode: 'US', score: '959.0KM²', trend: 'up' },
-    { id: '10', rank: 10, name: 'Nick Van Praag', countryCode: 'ES', score: '950.9KM²', trend: 'down' },
-    { id: '11', rank: 11, name: 'Ivy Thomas', countryCode: 'CA', score: '900.2KM²', trend: 'up' },
-];
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const METRICS = [
     { id: 'overall', label: 'OVERALL', icon: 'stats-chart' },
@@ -25,31 +17,81 @@ const METRICS = [
 ];
 
 export default function LeaderboardView() {
+    const { user } = useUser();
     const [activeMetric, setActiveMetric] = useState('overall');
     const [scope, setScope] = useState<'friends' | 'worldwide'>('worldwide');
+    const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [userStats, setUserStats] = useState<{
+        rank: number | null;
+        totalArea: number;
+        runCount: number;
+    }>({ rank: null, totalArea: 0, runCount: 0 });
 
-    const renderItem = ({ item }: { item: typeof LEADERBOARD_DATA[0] }) => (
+    // Fetch leaderboard data
+    useEffect(() => {
+        fetchLeaderboard();
+    }, []);
+
+    // Fetch user's own stats
+    useEffect(() => {
+        if (user?.id) {
+            fetchUserStats(user.id);
+        }
+    }, [user?.id]);
+
+    const fetchLeaderboard = async () => {
+        setLoading(true);
+        try {
+            const data = await getAreaLeaderboard(50);
+            setLeaderboard(data);
+        } catch (error) {
+            console.error('Error fetching leaderboard:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchUserStats = async (userId: string) => {
+        try {
+            const stats = await getUserRankAndStats(userId);
+            setUserStats(stats);
+        } catch (error) {
+            console.error('Error fetching user stats:', error);
+        }
+    };
+
+    const renderItem = ({ item }: { item: LeaderboardEntry }) => (
         <View style={styles.rankRow}>
             <View style={styles.rankContainer}>
-                <View style={[styles.flagStrip, { backgroundColor: getFlagColor(item.countryCode) }]} />
+                <View style={[styles.flagStrip, { backgroundColor: getRankColor(item.rank) }]} />
                 <Text style={styles.rankText}>{item.rank}</Text>
             </View>
             <View style={styles.avatarContainer}>
-                <View style={styles.avatarPlaceholder}>
-                    <Text style={styles.avatarText}>{item.name.charAt(0)}</Text>
-                </View>
+                {item.avatarUrl ? (
+                    <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
+                ) : (
+                    <View style={styles.avatarPlaceholder}>
+                        <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
+                    </View>
+                )}
             </View>
             <View style={styles.infoContainer}>
                 <Text style={styles.nameText}>{item.name}</Text>
+                <Text style={styles.runCountText}>{item.runCount} runs</Text>
             </View>
-            <Text style={styles.scoreText}>{item.score}</Text>
+            <Text style={styles.scoreText}>{formatArea(item.totalArea)}</Text>
         </View>
     );
 
-    const getFlagColor = (code: string) => {
-        const colors: any = { US: '#EF4444', ES: '#F59E0B', FR: '#3B82F6' };
-        return colors[code] || '#666';
+    const getRankColor = (rank: number) => {
+        if (rank === 1) return '#FFD700'; // Gold
+        if (rank === 2) return '#C0C0C0'; // Silver
+        if (rank === 3) return '#CD7F32'; // Bronze
+        return '#666';
     };
+
+    const userName = user?.firstName || user?.username || 'You';
 
     return (
         <View style={styles.container}>
@@ -94,22 +136,45 @@ export default function LeaderboardView() {
                 </View>
             </View>
 
+            {/* Current user's stats */}
             <View style={styles.userStatsRow}>
-                <Text style={styles.userRank}>?</Text>
+                <Text style={styles.userRank}>
+                    {userStats.rank ? `#${userStats.rank}` : '?'}
+                </Text>
                 <View style={styles.userAvatar}>
-                    <Ionicons name="person" size={16} color="#FFF" />
+                    {user?.imageUrl ? (
+                        <Image source={{ uri: user.imageUrl }} style={styles.userAvatarImage} />
+                    ) : (
+                        <Ionicons name="person" size={16} color="#FFF" />
+                    )}
                 </View>
-                <Text style={styles.userName}>Dhruv Pal</Text>
-                <Text style={styles.userScore}>0M²</Text>
+                <Text style={styles.userName}>{userName}</Text>
+                <Text style={styles.userScore}>{formatArea(userStats.totalArea)}</Text>
             </View>
 
-            <FlatList
-                data={LEADERBOARD_DATA}
-                renderItem={renderItem}
-                keyExtractor={(item) => item.id}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.listContent}
-            />
+            {/* Leaderboard list */}
+            {loading ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#3B82F6" />
+                    <Text style={styles.loadingText}>Loading leaderboard...</Text>
+                </View>
+            ) : leaderboard.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                    <Ionicons name="trophy-outline" size={48} color="#666" />
+                    <Text style={styles.emptyText}>No runs yet!</Text>
+                    <Text style={styles.emptySubtext}>Start a run to capture territory</Text>
+                </View>
+            ) : (
+                <FlatList
+                    data={leaderboard}
+                    renderItem={renderItem}
+                    keyExtractor={(item) => item.userId}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.listContent}
+                    onRefresh={fetchLeaderboard}
+                    refreshing={loading}
+                />
+            )}
         </View>
     );
 }
@@ -172,10 +237,10 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     userRank: {
-        color: '#999',
+        color: '#3B82F6',
         fontSize: 16,
         fontWeight: '700',
-        width: 30,
+        width: 40,
         textAlign: 'center',
     },
     userAvatar: {
@@ -186,6 +251,12 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginHorizontal: 12,
+        overflow: 'hidden',
+    },
+    userAvatarImage: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
     },
     userName: {
         color: '#FFFFFF',
@@ -194,9 +265,37 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     userScore: {
-        color: '#999',
+        color: '#3B82F6',
         fontSize: 14,
+        fontWeight: '700',
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 40,
+    },
+    loadingText: {
+        color: '#666',
+        marginTop: 12,
+        fontSize: 14,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 60,
+    },
+    emptyText: {
+        color: '#999',
+        fontSize: 18,
         fontWeight: '600',
+        marginTop: 16,
+    },
+    emptySubtext: {
+        color: '#666',
+        fontSize: 14,
+        marginTop: 4,
     },
     listContent: {
         paddingBottom: 20,
@@ -206,7 +305,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: 2,
         paddingVertical: 12,
-        backgroundColor: '#1E1E1E', // Slightly lighter than background
+        backgroundColor: '#1E1E1E',
         borderRadius: 8,
         paddingRight: 12,
     },
@@ -218,7 +317,6 @@ const styles = StyleSheet.create({
     flagStrip: {
         width: 4,
         height: 24,
-        backgroundColor: '#EF4444',
         marginRight: 8,
         borderTopRightRadius: 2,
         borderBottomRightRadius: 2,
@@ -240,20 +338,31 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    avatarImage: {
+        width: 40,
+        height: 40,
+        borderRadius: 8,
+    },
     avatarText: {
         color: '#FFF',
         fontWeight: '600',
+        fontSize: 16,
     },
     infoContainer: {
         flex: 1,
     },
     nameText: {
-        color: '#999',
+        color: '#FFF',
         fontSize: 14,
-        fontWeight: '500',
+        fontWeight: '600',
+    },
+    runCountText: {
+        color: '#666',
+        fontSize: 12,
+        marginTop: 2,
     },
     scoreText: {
-        color: '#666',
+        color: '#3B82F6',
         fontSize: 14,
         fontWeight: '700',
         textAlign: 'right',
