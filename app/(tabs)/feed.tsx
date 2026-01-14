@@ -1,9 +1,11 @@
 import { getUserCounts } from '@/services/friendsService';
+import { formatPostTime, getExplorePosts, Post } from '@/services/postsService';
 import { useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+    Image,
     SafeAreaView,
     ScrollView,
     StatusBar,
@@ -19,6 +21,7 @@ export default function FeedScreen() {
     const { user } = useUser();
     const [activeTab, setActiveTab] = useState<FeedTab>('explore');
     const [followCounts, setFollowCounts] = useState({ following: 0, followers: 0 });
+    const [explorePosts, setExplorePosts] = useState<Post[]>([]);
 
     // Fetch follow counts when user changes or tab is selected
     useEffect(() => {
@@ -28,6 +31,15 @@ export default function FeedScreen() {
             });
         }
     }, [user?.id, activeTab]);
+
+    // Fetch explore posts
+    useEffect(() => {
+        if (activeTab === 'explore') {
+            getExplorePosts(20).then(posts => {
+                setExplorePosts(posts);
+            });
+        }
+    }, [activeTab]);
 
     const renderTabContent = () => {
         if (activeTab === 'following') {
@@ -52,14 +64,17 @@ export default function FeedScreen() {
                         <Text style={styles.addFriendsText}>Add friends</Text>
                     </TouchableOpacity>
 
-                    <View style={styles.emptyCard}>
+                    <TouchableOpacity
+                        style={styles.emptyCard}
+                        onPress={() => router.push('/create-post')}
+                    >
                         <Ionicons
                             name="people-outline"
                             size={40}
                             color="rgba(255, 255, 255, 0.4)"
                         />
                         <Text style={styles.emptyTitle}>Share your thoughts or ask a question…</Text>
-                    </View>
+                    </TouchableOpacity>
 
                     <Text style={styles.noFollowText}>No one you follow completed a run yet.</Text>
                 </View>
@@ -138,6 +153,33 @@ export default function FeedScreen() {
                         profile, only available for this one day.
                     </Text>
                 </View>
+
+                {/* User Posts */}
+                {explorePosts.length > 0 && (
+                    <View style={styles.postsSection}>
+                        <Text style={styles.postsSectionTitle}>Recent Posts</Text>
+                        {explorePosts.map(post => (
+                            <View key={post.id} style={styles.postCard}>
+                                <View style={styles.postHeader}>
+                                    {post.userImage ? (
+                                        <Image source={{ uri: post.userImage }} style={styles.postAvatar} />
+                                    ) : (
+                                        <View style={styles.postAvatarPlaceholder}>
+                                            <Text style={styles.postAvatarText}>
+                                                {post.userName.charAt(0).toUpperCase()}
+                                            </Text>
+                                        </View>
+                                    )}
+                                    <View style={styles.postUserInfo}>
+                                        <Text style={styles.postUserName}>{post.userName}</Text>
+                                        <Text style={styles.postTime}>{formatPostTime(post.createdAt)}</Text>
+                                    </View>
+                                </View>
+                                <Text style={styles.postContent}>{post.content}</Text>
+                            </View>
+                        ))}
+                    </View>
+                )}
             </View>
         );
     };
@@ -490,6 +532,64 @@ const styles = StyleSheet.create({
     },
     challengeBody: {
         color: 'rgba(255,255,255,0.8)',
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    // Posts section
+    postsSection: {
+        marginTop: 16,
+    },
+    postsSectionTitle: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '600',
+        marginBottom: 12,
+    },
+    postCard: {
+        backgroundColor: '#151515',
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 12,
+    },
+    postHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    postAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+    },
+    postAvatarPlaceholder: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#FF6E6E',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    postAvatarText: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    postUserInfo: {
+        marginLeft: 12,
+        flex: 1,
+    },
+    postUserName: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    postTime: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 12,
+        marginTop: 2,
+    },
+    postContent: {
+        color: 'rgba(255,255,255,0.9)',
         fontSize: 14,
         lineHeight: 20,
     },
