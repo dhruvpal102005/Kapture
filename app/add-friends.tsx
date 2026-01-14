@@ -98,23 +98,39 @@ export default function AddFriendsScreen() {
         setSearchMode(false);
     };
 
+    const navigateToProfile = (item: UserWithFollow) => {
+        router.push({
+            pathname: '/user-profile',
+            params: {
+                userId: item.id,
+                userName: item.name,
+                userImage: item.imageUrl || '',
+            },
+        });
+    };
+
     const renderUserCard = (item: UserWithFollow, index: number, isSearch: boolean) => (
         <View style={styles.userCard}>
-            <View style={styles.avatarContainer}>
-                {item.imageUrl ? (
-                    <Image source={{ uri: item.imageUrl }} style={styles.avatar} />
-                ) : (
-                    <View style={styles.avatarPlaceholder}>
-                        <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
-                    </View>
-                )}
-            </View>
-            <View style={styles.userInfo}>
-                <Text style={styles.userName}>{item.name}</Text>
-                <Text style={styles.userStatus}>
-                    {item.isFollowing ? 'Following' : 'Not following'}
-                </Text>
-            </View>
+            <TouchableOpacity
+                style={styles.userCardContent}
+                onPress={() => navigateToProfile(item)}
+            >
+                <View style={styles.avatarContainer}>
+                    {item.imageUrl ? (
+                        <Image source={{ uri: item.imageUrl }} style={styles.avatar} />
+                    ) : (
+                        <View style={styles.avatarPlaceholder}>
+                            <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
+                        </View>
+                    )}
+                </View>
+                <View style={styles.userInfo}>
+                    <Text style={styles.userName}>{item.name}</Text>
+                    <Text style={styles.userStatus}>
+                        {item.isFollowing ? 'Following' : 'Not following'}
+                    </Text>
+                </View>
+            </TouchableOpacity>
             <TouchableOpacity
                 style={[styles.followButton, item.isFollowing && styles.followingButton]}
                 onPress={() => handleFollow(item.id, index, isSearch)}
@@ -319,6 +335,11 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         padding: 12,
         marginBottom: 8,
+    },
+    userCardContent: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     avatarContainer: {
         marginRight: 12,
