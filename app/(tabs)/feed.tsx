@@ -1,5 +1,8 @@
+import { getUserCounts } from '@/services/friendsService';
+import { useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
     SafeAreaView,
     ScrollView,
@@ -13,13 +16,39 @@ import {
 type FeedTab = 'explore' | 'groups' | 'following';
 
 export default function FeedScreen() {
+    const { user } = useUser();
     const [activeTab, setActiveTab] = useState<FeedTab>('explore');
+    const [followCounts, setFollowCounts] = useState({ following: 0, followers: 0 });
+
+    // Fetch follow counts when user changes or tab is selected
+    useEffect(() => {
+        if (user?.id && activeTab === 'following') {
+            getUserCounts(user.id).then(counts => {
+                setFollowCounts(counts);
+            });
+        }
+    }, [user?.id, activeTab]);
 
     const renderTabContent = () => {
         if (activeTab === 'following') {
             return (
                 <View style={styles.followingContainer}>
-                    <TouchableOpacity style={styles.addFriendsButton}>
+                    {/* Follower/Following Counts */}
+                    <View style={styles.countsRow}>
+                        <View style={styles.countItem}>
+                            <Text style={styles.countNumber}>{followCounts.following}</Text>
+                            <Text style={styles.countLabel}>Following</Text>
+                        </View>
+                        <View style={styles.countItem}>
+                            <Text style={styles.countNumber}>{followCounts.followers}</Text>
+                            <Text style={styles.countLabel}>Followers</Text>
+                        </View>
+                    </View>
+
+                    <TouchableOpacity
+                        style={styles.addFriendsButton}
+                        onPress={() => router.push('/add-friends')}
+                    >
                         <Text style={styles.addFriendsText}>Add friends</Text>
                     </TouchableOpacity>
 
@@ -31,6 +60,8 @@ export default function FeedScreen() {
                         />
                         <Text style={styles.emptyTitle}>Share your thoughts or ask a question…</Text>
                     </View>
+
+                    <Text style={styles.noFollowText}>No one you follow completed a run yet.</Text>
                 </View>
             );
         }
@@ -145,8 +176,8 @@ export default function FeedScreen() {
                                 {tab === 'explore'
                                     ? 'Explore'
                                     : tab === 'groups'
-                                      ? 'Groups'
-                                      : 'Following'}
+                                        ? 'Groups'
+                                        : 'Following'}
                             </Text>
                             {activeTab === tab && <View style={styles.tabUnderline} />}
                         </TouchableOpacity>
@@ -237,6 +268,25 @@ const styles = StyleSheet.create({
     followingContainer: {
         marginTop: 16,
     },
+    countsRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 40,
+        marginBottom: 20,
+    },
+    countItem: {
+        alignItems: 'center',
+    },
+    countNumber: {
+        color: '#FFFFFF',
+        fontSize: 20,
+        fontWeight: '700',
+    },
+    countLabel: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 12,
+        marginTop: 2,
+    },
     addFriendsButton: {
         borderRadius: 10,
         borderWidth: 1,
@@ -261,6 +311,12 @@ const styles = StyleSheet.create({
         fontSize: 14,
         textAlign: 'center',
         marginTop: 12,
+    },
+    noFollowText: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 14,
+        textAlign: 'center',
+        marginTop: 16,
     },
     // Groups tab
     groupsContainer: {
