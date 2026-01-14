@@ -1,6 +1,7 @@
 import GPSPermissionModal from '@/components/run/GPSPermissionModal';
 import PostRunModal from '@/components/run/PostRunModal';
 import { LocationPoint, RunStats, runTrackingService } from '@/services/runTrackingService';
+import { useUser } from '@clerk/clerk-expo';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useEffect, useRef, useState } from 'react';
@@ -22,6 +23,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 type RunState = 'idle' | 'running' | 'paused' | 'finished';
 
 export default function StartScreen() {
+    const { user } = useUser();
     const mapRef = useRef<MapView>(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
     const finishProgressAnim = useRef(new Animated.Value(0)).current;
@@ -132,7 +134,11 @@ export default function StartScreen() {
             return;
         }
 
+        // Pass user ID for Firebase session (null if not logged in)
+        const userId = user?.id ?? null;
+
         const started = await runTrackingService.startTracking(
+            userId,
             (location) => {
                 setUserLocation({
                     latitude: location.latitude,

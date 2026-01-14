@@ -1,19 +1,10 @@
 import * as Location from 'expo-location';
+import * as runService from './runService';
+import { socketService } from './socketService';
+import { LocationPoint, RunStats } from './types';
 
-export interface LocationPoint {
-    latitude: number;
-    longitude: number;
-    timestamp: number;
-    accuracy?: number;
-}
-
-export interface RunStats {
-    distance: number; // in kilometers
-    duration: number; // in seconds
-    averagePace: number; // in seconds per kilometer
-    capturedArea: number; // in square meters
-    locations: LocationPoint[];
-}
+// Re-export types for backward compatibility
+export type { LocationPoint, RunStats } from './types';
 
 class RunTrackingService {
     private locationSubscription: Location.LocationSubscription | null = null;
@@ -26,13 +17,25 @@ class RunTrackingService {
     private onStatsUpdate?: (stats: RunStats) => void;
     private updateInterval: ReturnType<typeof setInterval> | null = null;
 
+    // Firebase sync properties
+    private sessionId: string | null = null;
+    private userId: string | null = null;
+    private locationBatchBuffer: LocationPoint[] = [];
+    private batchSaveInterval: ReturnType<typeof setInterval> | null = null;
+    private batchIndex: number = 0;
+    private readonly BATCH_INTERVAL = 5000; // Save every 5 seconds
+
     // GPS filtering constants
-    private readonly MIN_DISTANCE_THRESHOLD = 0.008; // ~8 meters in kilometers (filters GPS noise)
-    private readonly MAX_ACCURACY = 50; // Ignore readings with accuracy worse than 50 meters
+    private readonly MIN_DISTANCE_THRESHOLD = 0.005; // ~5 meters in kilometers (filters GPS noise)
+    private readonly MAX_ACCURACY = 30; // Ignore readings with accuracy worse than 30 meters
     private readonly MIN_ACCURACY = 3; // Prefer readings with accuracy better than 3 meters
-    private readonly PACE_SMOOTHING_WINDOW = 5; // Number of recent pace values for smoothing
+    private readonly PACE_SMOOTHING_WINDOW = 10; // Number of recent pace values for smoothing
+    private readonly MIN_DISTANCE_FOR_PACE = 0.01; // Minimum 10m before calculating pace
 
     private recentPaces: number[] = []; // For pace smoothing
+    private lastCalculatedDistance: number = 0; // Last distance used for pace calculation
+    private cachedDistance: number = 0; // Cached total distance for stability
+    private lastValidLocationTime: number = 0; // Time of last valid location
 
     async requestPermissions(): Promise<boolean> {
         try {
@@ -51,6 +54,7 @@ class RunTrackingService {
     }
 
     async startTracking(
+        userId: string | null,
         onLocationUpdate: (location: LocationPoint) => void,
         onStatsUpdate: (stats: RunStats) => void
     ): Promise<boolean> {
@@ -68,6 +72,27 @@ class RunTrackingService {
             this.locations = [];
             this.validLocations = [];
             this.recentPaces = [];
+            this.userId = userId;
+            this.locationBatchBuffer = [];
+            this.batchIndex = 0;
+
+            // Create Firebase session if user is logged in
+            if (userId) {
+                try {
+                    this.sessionId = await runService.startRunSession(userId);
+                    this.startBatchSaving();
+
+                    // Connect to socket server for real-time streaming
+                    const connected = await socketService.connect();
+                    if (connected && this.sessionId) {
+                        socketService.startRun(userId, this.sessionId);
+                    }
+                } catch (error) {
+                    console.error('Error creating Firebase session:', error);
+                    // Continue without Firebase - run will work locally
+                    this.sessionId = null;
+                }
+            }
 
             // Start location tracking with high accuracy
             this.locationSubscription = await Location.watchPositionAsync(
@@ -91,8 +116,13 @@ class RunTrackingService {
                     // Filter and validate location before adding to valid locations
                     if (this.isValidLocation(point)) {
                         this.validLocations.push(point);
+                        // Add to Firebase batch buffer
+                        this.addToLocationBuffer(point);
                         // Update stats only when we have valid movement
                         this.updateStats();
+                        // Send to socket for real-time streaming
+                        const stats = this.getStats();
+                        socketService.sendLocation(point, stats);
                     } else {
                         // Still update stats periodically even if no new valid location
                         // This ensures duration and other stats update correctly
@@ -132,6 +162,42 @@ class RunTrackingService {
         return distance >= this.MIN_DISTANCE_THRESHOLD;
     }
 
+    // Firebase batch saving methods
+    private startBatchSaving(): void {
+        if (this.batchSaveInterval) return;
+
+        this.batchSaveInterval = setInterval(async () => {
+            if (this.sessionId && this.locationBatchBuffer.length > 0) {
+                const batchToSave = [...this.locationBatchBuffer];
+                this.locationBatchBuffer = [];
+                this.batchIndex++;
+
+                try {
+                    await runService.saveLocationBatch(
+                        this.sessionId,
+                        batchToSave,
+                        this.batchIndex
+                    );
+                } catch (error) {
+                    console.error('Error saving location batch:', error);
+                    // Re-add failed batch to buffer for retry
+                    this.locationBatchBuffer = [...batchToSave, ...this.locationBatchBuffer];
+                }
+            }
+        }, this.BATCH_INTERVAL);
+    }
+
+    private stopBatchSaving(): void {
+        if (this.batchSaveInterval) {
+            clearInterval(this.batchSaveInterval);
+            this.batchSaveInterval = null;
+        }
+    }
+
+    private addToLocationBuffer(point: LocationPoint): void {
+        this.locationBatchBuffer.push(point);
+    }
+
     pauseTracking(): void {
         if (this.locationSubscription) {
             this.pauseTime = Date.now();
@@ -142,6 +208,14 @@ class RunTrackingService {
             clearInterval(this.updateInterval);
             this.updateInterval = null;
         }
+
+        // Stop batch saving and update Firebase status
+        this.stopBatchSaving();
+        if (this.sessionId) {
+            runService.updateRunStatus(this.sessionId, 'paused', this.totalPausedDuration);
+        }
+        // Notify socket server
+        socketService.pauseRun();
     }
 
     async resumeTracking(): Promise<void> {
@@ -187,6 +261,14 @@ class RunTrackingService {
             this.updateInterval = setInterval(() => {
                 this.updateStats();
             }, 1000);
+
+            // Restart batch saving and update Firebase status
+            this.startBatchSaving();
+            if (this.sessionId) {
+                runService.updateRunStatus(this.sessionId, 'active', this.totalPausedDuration);
+            }
+            // Notify socket server
+            socketService.resumeRun();
         } catch (error) {
             console.error('Error resuming tracking:', error);
         }
@@ -202,7 +284,37 @@ class RunTrackingService {
             this.updateInterval = null;
         }
 
+        // Stop batch saving and save any remaining locations
+        this.stopBatchSaving();
+
         const finalStats = this.getStats();
+
+        // Finalize Firebase session
+        if (this.sessionId) {
+            // Save remaining buffered locations
+            if (this.locationBatchBuffer.length > 0) {
+                this.batchIndex++;
+                runService.saveLocationBatch(
+                    this.sessionId,
+                    this.locationBatchBuffer,
+                    this.batchIndex
+                );
+            }
+
+            // Save final stats to Firebase
+            runService.finishRunSession(this.sessionId, {
+                totalDistance: finalStats.distance,
+                totalDuration: finalStats.duration,
+                averagePace: finalStats.averagePace,
+                capturedArea: finalStats.capturedArea,
+                pausedDuration: this.totalPausedDuration,
+            });
+        }
+
+        // Notify socket server and disconnect
+        socketService.finishRun(finalStats);
+        socketService.disconnect();
+
         this.reset();
         return finalStats;
     }
@@ -218,31 +330,56 @@ class RunTrackingService {
         const duration = Math.max(0, Math.floor(elapsedTime / 1000));
 
         // Calculate distance using only valid locations (filtered GPS points)
-        let distance = 0;
-        for (let i = 1; i < this.validLocations.length; i++) {
-            const prev = this.validLocations[i - 1];
-            const curr = this.validLocations[i];
-            distance += this.calculateDistance(prev, curr);
+        // Only recalculate if we have new valid locations
+        if (this.validLocations.length > 1) {
+            let totalDistance = 0;
+            for (let i = 1; i < this.validLocations.length; i++) {
+                const prev = this.validLocations[i - 1];
+                const curr = this.validLocations[i];
+                totalDistance += this.calculateDistance(prev, curr);
+            }
+            // Only update cached distance if it increased (never decrease)
+            if (totalDistance > this.cachedDistance) {
+                this.cachedDistance = totalDistance;
+            }
         }
 
-        // Calculate smoothed average pace
-        let averagePace = 0;
-        if (distance > 0 && duration > 0) {
-            const currentPace = duration / distance; // seconds per kilometer
+        const distance = this.cachedDistance;
 
-            // Add to recent paces for smoothing
-            this.recentPaces.push(currentPace);
-            if (this.recentPaces.length > this.PACE_SMOOTHING_WINDOW) {
-                this.recentPaces.shift(); // Remove oldest
+        // Calculate smoothed average pace - only update when distance meaningfully changes
+        let averagePace = 0;
+
+        if (distance >= this.MIN_DISTANCE_FOR_PACE && duration > 0) {
+            // Only update pace if distance has increased by at least 5 meters since last calculation
+            const distanceChange = distance - this.lastCalculatedDistance;
+
+            if (distanceChange >= 0.005) {
+                const currentPace = duration / distance; // seconds per kilometer
+
+                // Filter out unrealistic paces (less than 2 min/km or more than 30 min/km)
+                if (currentPace >= 120 && currentPace <= 1800) {
+                    this.recentPaces.push(currentPace);
+                    if (this.recentPaces.length > this.PACE_SMOOTHING_WINDOW) {
+                        this.recentPaces.shift(); // Remove oldest
+                    }
+                    this.lastCalculatedDistance = distance;
+                }
             }
 
-            // Calculate smoothed pace (average of recent paces)
-            const sum = this.recentPaces.reduce((a, b) => a + b, 0);
-            averagePace = sum / this.recentPaces.length;
-        } else {
-            // If no distance, pace should be 0 or undefined
-            averagePace = 0;
-            this.recentPaces = []; // Reset when stationary
+            // Return smoothed pace if we have enough samples
+            if (this.recentPaces.length >= 2) {
+                // Use weighted average - recent paces matter more
+                let weightedSum = 0;
+                let totalWeight = 0;
+                for (let i = 0; i < this.recentPaces.length; i++) {
+                    const weight = i + 1; // Later values have higher weight
+                    weightedSum += this.recentPaces[i] * weight;
+                    totalWeight += weight;
+                }
+                averagePace = weightedSum / totalWeight;
+            } else if (this.recentPaces.length === 1) {
+                averagePace = this.recentPaces[0];
+            }
         }
 
         // Calculate captured area using valid locations
@@ -307,6 +444,17 @@ class RunTrackingService {
         this.recentPaces = [];
         this.onLocationUpdate = undefined;
         this.onStatsUpdate = undefined;
+
+        // Reset pace/distance tracking
+        this.lastCalculatedDistance = 0;
+        this.cachedDistance = 0;
+        this.lastValidLocationTime = 0;
+
+        // Reset Firebase sync state
+        this.sessionId = null;
+        this.userId = null;
+        this.locationBatchBuffer = [];
+        this.batchIndex = 0;
     }
 }
 
