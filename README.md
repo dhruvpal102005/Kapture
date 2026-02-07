@@ -364,5 +364,5 @@ For questions or support, please open an issue in the repository.
 <div align="center">
   <strong>Built with ❤️ for runners worldwide</strong>
   <br />
-  <sub>Capture your territory. Run the world.</sub>
+  <sub>Capture your territory. Run the world..</sub>
 </div>
